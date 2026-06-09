@@ -2,7 +2,7 @@ package models
 
 type Rule struct {
 	ID          uint                     `gorm:"primaryKey" json:"id"`
-	Priority    int                      `json:"priority"`
+	Priority    int                      `gorm:"uniqueIndex;check:priority > 0" json:"priority"`
 	Amount      float64                  `json:"amount"`
 	Allocations []ProportionalAllocation `gorm:"foreignKey:RuleID" json:"allocations"`
 	BucketID    uint                     `json:"bucket_id"`

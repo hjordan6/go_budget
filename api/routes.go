@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/hjordan6/go_budget/models"
@@ -57,6 +58,12 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		// Priority must be a positive integer.
+		if rule.Priority <= 0 {
+			http.Error(w, "priority must be a positive integer", http.StatusBadRequest)
+			return
+		}
+
 		// Ignore any client-supplied IDs; let the database assign them.
 		rule.ID = 0
 		for i := range rule.Allocations {
@@ -68,6 +75,11 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 		// association so only BucketID is used to reference an existing
 		// bucket rather than upserting a blank one.
 		if err := db.Omit("Bucket").Create(&rule).Error; err != nil {
+			// A duplicate priority violates the unique index.
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				http.Error(w, "a rule with this priority already exists", http.StatusConflict)
+				return
+			}
 			http.Error(w, "failed to create rule", http.StatusInternalServerError)
 			return
 		}
