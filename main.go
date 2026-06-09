@@ -38,6 +38,7 @@ func main() {
 	if err = db.AutoMigrate(
 		&models.Bucket{},
 		&models.Rule{},
+		&models.ProportionalAllocation{},
 		&models.AutoPayment{},
 	); err != nil {
 		log.Fatalf("migrate: %v", err)
