@@ -45,7 +45,7 @@ func main() {
 
 	addr := ":8888"
 	log.Printf("Starting server on %s", addr)
-	if err := http.ListenAndServe(addr, api.Routes()); err != nil {
+	if err := http.ListenAndServe(addr, api.Routes(db)); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
