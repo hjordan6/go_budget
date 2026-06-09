@@ -15,7 +15,9 @@ const (
 // the higher-priority rules have run.
 type Rule struct {
 	ID       uint     `gorm:"primaryKey" json:"id"`
-	Priority int      `gorm:"uniqueIndex;check:priority > 0" json:"priority"`
+	UserID   uint     `gorm:"uniqueIndex:idx_user_priority" json:"user_id"`
+	User     User     `gorm:"foreignKey:UserID" json:"user"`
+	Priority int      `gorm:"uniqueIndex:idx_user_priority;check:priority > 0" json:"priority"`
 	Type     RuleType `gorm:"check:type IN ('fill_up','percentage')" json:"type"`
 	BucketID uint     `json:"bucket_id"`
 	Bucket   Bucket   `gorm:"foreignKey:BucketID" json:"bucket"`
