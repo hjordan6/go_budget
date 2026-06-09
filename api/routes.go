@@ -47,9 +47,8 @@ func createBucket(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-// createRule handles creating a new Rule from the JSON request body. Any
-// allocations included in the body are persisted alongside the rule via
-// GORM's has-many association handling.
+// createRule handles creating a new Rule from the JSON request body. Rules
+// are validated according to their type before being persisted via GORM.
 func createRule(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var rule models.Rule
@@ -64,16 +63,32 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		// Ignore any client-supplied IDs; let the database assign them.
-		rule.ID = 0
-		for i := range rule.Allocations {
-			rule.Allocations[i].ID = 0
-			rule.Allocations[i].RuleID = 0
+		// Validate fields according to the rule type.
+		switch rule.Type {
+		case models.RuleTypeFillUp:
+			if rule.Target <= 0 {
+				http.Error(w, "fill_up rules require a positive target", http.StatusBadRequest)
+				return
+			}
+		case models.RuleTypePercentage:
+			if rule.Percentage <= 0 || rule.Percentage > 100 {
+				http.Error(w, "percentage rules require a percentage between 0 and 100", http.StatusBadRequest)
+				return
+			}
+			if rule.Cap != nil && *rule.Cap < 0 {
+				http.Error(w, "cap must not be negative", http.StatusBadRequest)
+				return
+			}
+		default:
+			http.Error(w, "type must be 'fill_up' or 'percentage'", http.StatusBadRequest)
+			return
 		}
 
-		// Create cascades to the associated allocations. Omit the Bucket
-		// association so only BucketID is used to reference an existing
-		// bucket rather than upserting a blank one.
+		// Ignore any client-supplied ID; let the database assign it.
+		rule.ID = 0
+
+		// Omit the Bucket association so only BucketID is used to reference
+		// an existing bucket rather than upserting a blank one.
 		if err := db.Omit("Bucket").Create(&rule).Error; err != nil {
 			// A duplicate priority violates the unique index.
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
