@@ -17,6 +17,7 @@ func Routes(db *gorm.DB) *http.ServeMux {
 		w.Write([]byte("pong"))
 	})
 
+	mux.HandleFunc("POST /users", createUser(db))
 	mux.HandleFunc("POST /buckets", createBucket(db))
 	mux.HandleFunc("POST /rules", createRule(db))
 	mux.HandleFunc("POST /auto-payments", createAutoPayment(db))
@@ -25,8 +26,36 @@ func Routes(db *gorm.DB) *http.ServeMux {
 	return mux
 }
 
-// createBucket handles creating a new Bucket from the JSON request body and
+// createUser handles creating a new User from the JSON request body and
 // persisting it to the database via GORM.
+func createUser(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var user models.User
+		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Ignore any client-supplied ID; let the database assign it.
+		user.ID = 0
+
+		if err := db.Create(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				http.Error(w, "a user with this email already exists", http.StatusConflict)
+				return
+			}
+			http.Error(w, "failed to create user", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(user)
+	}
+}
+
+// createBucket handles creating a new Bucket from the JSON request body and
+// persisting it to the database via GORM. Each bucket belongs to a user.
 func createBucket(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var bucket models.Bucket
@@ -35,10 +64,21 @@ func createBucket(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		if bucket.UserID == 0 {
+			http.Error(w, "user_id is required", http.StatusBadRequest)
+			return
+		}
+
 		// Ignore any client-supplied ID; let the database assign it.
 		bucket.ID = 0
 
-		if err := db.Create(&bucket).Error; err != nil {
+		// Omit the User association so only UserID is used to reference an
+		// existing user rather than upserting a blank one.
+		if err := db.Omit("User").Create(&bucket).Error; err != nil {
+			if errors.Is(err, gorm.ErrForeignKeyViolated) {
+				http.Error(w, "user does not exist", http.StatusBadRequest)
+				return
+			}
 			http.Error(w, "failed to create bucket", http.StatusInternalServerError)
 			return
 		}
@@ -56,6 +96,11 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 		var rule models.Rule
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if rule.UserID == 0 {
+			http.Error(w, "user_id is required", http.StatusBadRequest)
 			return
 		}
 
@@ -89,12 +134,16 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 		// Ignore any client-supplied ID; let the database assign it.
 		rule.ID = 0
 
-		// Omit the Bucket association so only BucketID is used to reference
-		// an existing bucket rather than upserting a blank one.
-		if err := db.Omit("Bucket").Create(&rule).Error; err != nil {
-			// A duplicate priority violates the unique index.
+		// Omit the User and Bucket associations so only the foreign keys are
+		// used to reference existing rows rather than upserting blank ones.
+		if err := db.Omit("User", "Bucket").Create(&rule).Error; err != nil {
+			// A duplicate priority for this user violates the unique index.
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				http.Error(w, "a rule with this priority already exists", http.StatusConflict)
+				http.Error(w, "a rule with this priority already exists for this user", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, gorm.ErrForeignKeyViolated) {
+				http.Error(w, "user or bucket does not exist", http.StatusBadRequest)
 				return
 			}
 			http.Error(w, "failed to create rule", http.StatusInternalServerError)
@@ -107,13 +156,15 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 	}
 }
 
-// incomeDistribution accepts an income amount and distributes it into buckets
-// by executing the configured rules in ascending priority order. The rules are
-// run via engine.Distribute and the resulting bucket balances are persisted
-// inside a transaction so the deposit is applied atomically.
+// incomeDistribution accepts an income amount for a user and distributes it
+// into that user's buckets by executing their rules in ascending priority
+// order. The rules are run via engine.Distribute; the resulting bucket balances
+// and a record of the distribution are persisted inside a transaction so the
+// deposit is applied atomically.
 func incomeDistribution(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			UserID uint    `json:"user_id"`
 			Amount float64 `json:"amount"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -121,40 +172,74 @@ func incomeDistribution(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
+		if req.UserID == 0 {
+			http.Error(w, "user_id is required", http.StatusBadRequest)
+			return
+		}
 		if req.Amount <= 0 {
 			http.Error(w, "amount must be a positive number", http.StatusBadRequest)
 			return
 		}
 
-		var result engine.Result
+		distribution := models.IncomeDistribution{UserID: req.UserID, Income: req.Amount}
 		err := db.Transaction(func(tx *gorm.DB) error {
+			// Make sure the user exists before recording anything against them.
+			var count int64
+			if err := tx.Model(&models.User{}).Where("id = ?", req.UserID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count == 0 {
+				return errUserNotFound
+			}
+
+			// Only this user's rules run, into this user's buckets.
 			var rules []models.Rule
-			if err := tx.Preload("Bucket").Order("priority asc").Find(&rules).Error; err != nil {
+			if err := tx.Preload("Bucket").
+				Where("user_id = ?", req.UserID).
+				Order("priority asc").
+				Find(&rules).Error; err != nil {
 				return err
 			}
 
-			result = engine.Distribute(req.Amount, rules)
+			result := engine.Distribute(req.Amount, rules)
+			distribution.Unallocated = result.Unallocated
 
-			// Persist only the buckets that actually received a deposit.
 			for _, a := range result.Allocations {
+				// Persist the bucket's new balance.
 				if err := tx.Model(&models.Bucket{}).
 					Where("id = ?", a.BucketID).
 					Update("current_amount", a.NewBalance).Error; err != nil {
 					return err
 				}
+				distribution.Allocations = append(distribution.Allocations, models.DistributionAllocation{
+					RuleID:     a.RuleID,
+					BucketID:   a.BucketID,
+					Type:       a.Type,
+					Amount:     a.Amount,
+					NewBalance: a.NewBalance,
+				})
 			}
-			return nil
+
+			// Save the distribution and its allocations as a history record.
+			return tx.Omit("User").Create(&distribution).Error
 		})
 		if err != nil {
+			if errors.Is(err, errUserNotFound) {
+				http.Error(w, "user does not exist", http.StatusBadRequest)
+				return
+			}
 			http.Error(w, "failed to distribute income", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(result)
+		json.NewEncoder(w).Encode(distribution)
 	}
 }
+
+// errUserNotFound signals that a request referenced a user that does not exist.
+var errUserNotFound = errors.New("user not found")
 
 // createAutoPayment handles creating a new AutoPayment from the JSON request
 // body and persisting it to the database via GORM.
