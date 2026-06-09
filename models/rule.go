@@ -27,8 +27,8 @@ type Rule struct {
 	// Used by percentage rules.
 	Percentage float64 `json:"percentage"`
 
-	// Cap optionally limits how high this rule will take the bucket's
-	// balance. A nil Cap means unlimited. Used by percentage rules;
-	// fill_up rules are inherently capped by Target.
-	Cap *float64 `json:"cap"`
+	// DepositCap optionally limits how much this rule deposits in a single
+	// execution (the amount taken, not the bucket's total balance). A nil
+	// DepositCap means uncapped. Used by percentage rules.
+	DepositCap *float64 `json:"deposit_cap"`
 }

@@ -75,8 +75,8 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 				http.Error(w, "percentage rules require a percentage between 0 and 100", http.StatusBadRequest)
 				return
 			}
-			if rule.Cap != nil && *rule.Cap < 0 {
-				http.Error(w, "cap must not be negative", http.StatusBadRequest)
+			if rule.DepositCap != nil && *rule.DepositCap < 0 {
+				http.Error(w, "deposit_cap must not be negative", http.StatusBadRequest)
 				return
 			}
 		default:
