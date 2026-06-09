@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/hjordan6/go_budget/engine"
 	"github.com/hjordan6/go_budget/models"
 	"gorm.io/gorm"
 )
@@ -19,6 +20,7 @@ func Routes(db *gorm.DB) *http.ServeMux {
 	mux.HandleFunc("POST /buckets", createBucket(db))
 	mux.HandleFunc("POST /rules", createRule(db))
 	mux.HandleFunc("POST /auto-payments", createAutoPayment(db))
+	mux.HandleFunc("POST /income", incomeDistribution(db))
 
 	return mux
 }
@@ -102,6 +104,55 @@ func createRule(db *gorm.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(rule)
+	}
+}
+
+// incomeDistribution accepts an income amount and distributes it into buckets
+// by executing the configured rules in ascending priority order. The rules are
+// run via engine.Distribute and the resulting bucket balances are persisted
+// inside a transaction so the deposit is applied atomically.
+func incomeDistribution(db *gorm.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Amount float64 `json:"amount"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Amount <= 0 {
+			http.Error(w, "amount must be a positive number", http.StatusBadRequest)
+			return
+		}
+
+		var result engine.Result
+		err := db.Transaction(func(tx *gorm.DB) error {
+			var rules []models.Rule
+			if err := tx.Preload("Bucket").Order("priority asc").Find(&rules).Error; err != nil {
+				return err
+			}
+
+			result = engine.Distribute(req.Amount, rules)
+
+			// Persist only the buckets that actually received a deposit.
+			for _, a := range result.Allocations {
+				if err := tx.Model(&models.Bucket{}).
+					Where("id = ?", a.BucketID).
+					Update("current_amount", a.NewBalance).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			http.Error(w, "failed to distribute income", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(result)
 	}
 }
 
