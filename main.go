@@ -30,7 +30,7 @@ func main() {
 		envOr("PGSSLMODE", "disable"),
 	)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{TranslateError: true})
 	if err != nil {
 		log.Fatalf("connect: %v", err)
 	}
@@ -45,7 +45,7 @@ func main() {
 
 	addr := ":8888"
 	log.Printf("Starting server on %s", addr)
-	if err := http.ListenAndServe(addr, api.Routes()); err != nil {
+	if err := http.ListenAndServe(addr, api.Routes(db)); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
