@@ -1,10 +1,13 @@
-package budgetgoapi
+package main
 
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
+	"github.com/hjordan6/go_budget/api"
+	"github.com/hjordan6/go_budget/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -30,5 +33,19 @@ func main() {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("connect: %v", err)
+	}
+
+	if err = db.AutoMigrate(
+		&models.Bucket{},
+		&models.Rule{},
+		&models.AutoPayment{},
+	); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
+	addr := ":8888"
+	log.Printf("Starting server on %s", addr)
+	if err := http.ListenAndServe(addr, api.Routes()); err != nil {
+		log.Fatalf("server: %v", err)
 	}
 }
