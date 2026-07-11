@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { api } from '../api.js'
+import TransactionList from './TransactionList.vue'
 
 const props = defineProps({
   bucketId: { type: Number, required: true },
@@ -137,6 +138,8 @@ async function remove() {
             <button class="btn" :disabled="busy" @click="move">Move money</button>
           </template>
         </div>
+
+        <TransactionList :bucket-id="props.bucketId" @changed="emit('changed', $event)" />
 
         <div class="row-actions">
           <button class="btn secondary" :disabled="busy" @click="startEdit">Edit</button>

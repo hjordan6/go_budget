@@ -42,6 +42,7 @@ func main() {
 		&models.Bucket{},
 		&models.Income{},
 		&models.Session{},
+		&models.Transaction{},
 	); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
