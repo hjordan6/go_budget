@@ -2,182 +2,86 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 
-	"github.com/hjordan6/go_budget/engine"
-	"github.com/hjordan6/go_budget/models"
 	"gorm.io/gorm"
 )
 
-func Routes(db *gorm.DB) *http.ServeMux {
+// Handler holds shared dependencies for the HTTP handlers.
+type Handler struct {
+	DB *gorm.DB
+}
+
+// Routes wires up the JSON API under /api and serves the built Vue SPA from
+// staticDir for everything else (with client-side routing fallback).
+func Routes(db *gorm.DB, staticDir string) *http.ServeMux {
+	h := &Handler{DB: db}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+
+	mux.HandleFunc("GET /ping", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("pong"))
 	})
 
-	mux.HandleFunc("POST /buckets", createBucket(db))
-	mux.HandleFunc("POST /rules", createRule(db))
-	mux.HandleFunc("POST /auto-payments", createAutoPayment(db))
-	mux.HandleFunc("POST /income", incomeDistribution(db))
+	// Auth
+	mux.HandleFunc("POST /api/register", h.register)
+	mux.HandleFunc("POST /api/login", h.login)
+	mux.HandleFunc("POST /api/logout", h.logout)
+	mux.HandleFunc("GET /api/me", h.me)
+
+	// Buckets (auth required). The literal /reorder route is more specific than
+	// /{id}, so Go's ServeMux dispatches it first.
+	mux.HandleFunc("GET /api/buckets", h.requireAuth(h.listBuckets))
+	mux.HandleFunc("POST /api/buckets", h.requireAuth(h.createBucket))
+	mux.HandleFunc("PUT /api/buckets/reorder", h.requireAuth(h.reorderBuckets))
+	mux.HandleFunc("GET /api/buckets/{id}", h.requireAuth(h.getBucket))
+	mux.HandleFunc("PUT /api/buckets/{id}", h.requireAuth(h.updateBucket))
+	mux.HandleFunc("DELETE /api/buckets/{id}", h.requireAuth(h.deleteBucket))
+	mux.HandleFunc("POST /api/buckets/{id}/transfer", h.requireAuth(h.transferMoney))
+
+	// Income (auth required)
+	mux.HandleFunc("POST /api/income", h.requireAuth(h.addIncome))
+	mux.HandleFunc("GET /api/incomes", h.requireAuth(h.listIncomes))
+
+	// SPA + static assets
+	mux.HandleFunc("/", spaHandler(staticDir))
 
 	return mux
 }
 
-// createBucket handles creating a new Bucket from the JSON request body and
-// persisting it to the database via GORM.
-func createBucket(db *gorm.DB) http.HandlerFunc {
+// spaHandler serves static files from staticDir, falling back to index.html so
+// the Vue client-side router can handle unknown paths.
+func spaHandler(staticDir string) http.HandlerFunc {
+	fileServer := http.FileServer(http.Dir(staticDir))
+	index := filepath.Join(staticDir, "index.html")
 	return func(w http.ResponseWriter, r *http.Request) {
-		var bucket models.Bucket
-		if err := json.NewDecoder(r.Body).Decode(&bucket); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
+		clean := filepath.Clean(r.URL.Path)
+		p := filepath.Join(staticDir, clean)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			fileServer.ServeHTTP(w, r)
 			return
 		}
-
-		// Ignore any client-supplied ID; let the database assign it.
-		bucket.ID = 0
-
-		if err := db.Create(&bucket).Error; err != nil {
-			http.Error(w, "failed to create bucket", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(bucket)
+		http.ServeFile(w, r, index)
 	}
 }
 
-// createRule handles creating a new Rule from the JSON request body. Rules
-// are validated according to their type before being persisted via GORM.
-func createRule(db *gorm.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var rule models.Rule
-		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
+// --- small JSON helpers shared across handlers ---
 
-		// Priority must be a positive integer.
-		if rule.Priority <= 0 {
-			http.Error(w, "priority must be a positive integer", http.StatusBadRequest)
-			return
-		}
-
-		// Validate fields according to the rule type.
-		switch rule.Type {
-		case models.RuleTypeFillUp:
-			if rule.Target <= 0 {
-				http.Error(w, "fill_up rules require a positive target", http.StatusBadRequest)
-				return
-			}
-		case models.RuleTypePercentage:
-			if rule.Percentage <= 0 || rule.Percentage > 100 {
-				http.Error(w, "percentage rules require a percentage between 0 and 100", http.StatusBadRequest)
-				return
-			}
-			if rule.DepositCap != nil && *rule.DepositCap < 0 {
-				http.Error(w, "deposit_cap must not be negative", http.StatusBadRequest)
-				return
-			}
-		default:
-			http.Error(w, "type must be 'fill_up' or 'percentage'", http.StatusBadRequest)
-			return
-		}
-
-		// Ignore any client-supplied ID; let the database assign it.
-		rule.ID = 0
-
-		// Omit the Bucket association so only BucketID is used to reference
-		// an existing bucket rather than upserting a blank one.
-		if err := db.Omit("Bucket").Create(&rule).Error; err != nil {
-			// A duplicate priority violates the unique index.
-			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				http.Error(w, "a rule with this priority already exists", http.StatusConflict)
-				return
-			}
-			http.Error(w, "failed to create rule", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(rule)
-	}
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }
 
-// incomeDistribution accepts an income amount and distributes it into buckets
-// by executing the configured rules in ascending priority order. The rules are
-// run via engine.Distribute and the resulting bucket balances are persisted
-// inside a transaction so the deposit is applied atomically.
-func incomeDistribution(db *gorm.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Amount float64 `json:"amount"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		if req.Amount <= 0 {
-			http.Error(w, "amount must be a positive number", http.StatusBadRequest)
-			return
-		}
-
-		var result engine.Result
-		err := db.Transaction(func(tx *gorm.DB) error {
-			var rules []models.Rule
-			if err := tx.Preload("Bucket").Order("priority asc").Find(&rules).Error; err != nil {
-				return err
-			}
-
-			result = engine.Distribute(req.Amount, rules)
-
-			// Persist only the buckets that actually received a deposit.
-			for _, a := range result.Allocations {
-				if err := tx.Model(&models.Bucket{}).
-					Where("id = ?", a.BucketID).
-					Update("current_amount", a.NewBalance).Error; err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			http.Error(w, "failed to distribute income", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(result)
-	}
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// createAutoPayment handles creating a new AutoPayment from the JSON request
-// body and persisting it to the database via GORM.
-func createAutoPayment(db *gorm.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var autoPayment models.AutoPayment
-		if err := json.NewDecoder(r.Body).Decode(&autoPayment); err != nil {
-			http.Error(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		// Ignore any client-supplied ID; let the database assign it.
-		autoPayment.ID = 0
-
-		// Omit the Bucket association so only BucketID is used to reference
-		// an existing bucket rather than upserting a blank one.
-		if err := db.Omit("Bucket").Create(&autoPayment).Error; err != nil {
-			http.Error(w, "failed to create auto payment", http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(autoPayment)
-	}
+func readJSON(r *http.Request, dst any) error {
+	defer r.Body.Close()
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
 }
