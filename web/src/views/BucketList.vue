@@ -64,7 +64,10 @@ onMounted(load)
         <h1>Budget</h1>
         <div class="user" v-if="auth.user">{{ auth.user.name || auth.user.email }}</div>
       </div>
-      <button class="link" style="color: #fff" @click="doLogout">Log out</button>
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+        <RouterLink class="link" style="color: #fff" to="/transactions">Transactions</RouterLink>
+        <button class="link" style="color: #fff" @click="doLogout">Log out</button>
+      </div>
     </header>
 
     <main class="content">

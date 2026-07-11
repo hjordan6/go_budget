@@ -45,6 +45,12 @@ func Routes(db *gorm.DB, staticDir string) *http.ServeMux {
 	mux.HandleFunc("POST /api/income", h.requireAuth(h.addIncome))
 	mux.HandleFunc("GET /api/incomes", h.requireAuth(h.listIncomes))
 
+	// Transactions (auth required)
+	mux.HandleFunc("GET /api/transactions", h.requireAuth(h.listTransactions))
+	mux.HandleFunc("POST /api/transactions", h.requireAuth(h.createTransaction))
+	mux.HandleFunc("PUT /api/transactions/{id}", h.requireAuth(h.updateTransaction))
+	mux.HandleFunc("DELETE /api/transactions/{id}", h.requireAuth(h.deleteTransaction))
+
 	// SPA + static assets
 	mux.HandleFunc("/", spaHandler(staticDir))
 

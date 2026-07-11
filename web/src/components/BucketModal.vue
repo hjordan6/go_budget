@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { api } from '../api.js'
+import TransactionList from './TransactionList.vue'
 
 const props = defineProps({
   bucketId: { type: Number, required: true },
@@ -119,6 +120,8 @@ async function remove() {
       <div v-if="notice" class="notice">{{ notice }}</div>
 
       <template v-if="bucket && !editing">
+        <TransactionList :bucket-id="props.bucketId" @changed="emit('changed', $event)" />
+
         <!-- Move money -->
         <div class="section">
           <div class="section-title">Move money</div>
