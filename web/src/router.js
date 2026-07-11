@@ -4,6 +4,7 @@ import { auth, ensureLoaded } from './store.js'
 import BucketList from './views/BucketList.vue'
 import AddIncome from './views/AddIncome.vue'
 import AddBucket from './views/AddBucket.vue'
+import Transactions from './views/Transactions.vue'
 import Login from './views/Login.vue'
 import Register from './views/Register.vue'
 
@@ -11,6 +12,7 @@ const routes = [
   { path: '/', component: BucketList, meta: { requiresAuth: true } },
   { path: '/income', component: AddIncome, meta: { requiresAuth: true } },
   { path: '/bucket/new', component: AddBucket, meta: { requiresAuth: true } },
+  { path: '/transactions', component: Transactions, meta: { requiresAuth: true } },
   { path: '/login', component: Login },
   { path: '/register', component: Register },
 ]

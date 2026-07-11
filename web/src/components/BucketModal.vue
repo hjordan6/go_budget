@@ -120,6 +120,8 @@ async function remove() {
       <div v-if="notice" class="notice">{{ notice }}</div>
 
       <template v-if="bucket && !editing">
+        <TransactionList :bucket-id="props.bucketId" @changed="emit('changed', $event)" />
+
         <!-- Move money -->
         <div class="section">
           <div class="section-title">Move money</div>
@@ -138,8 +140,6 @@ async function remove() {
             <button class="btn" :disabled="busy" @click="move">Move money</button>
           </template>
         </div>
-
-        <TransactionList :bucket-id="props.bucketId" @changed="emit('changed', $event)" />
 
         <div class="row-actions">
           <button class="btn secondary" :disabled="busy" @click="startEdit">Edit</button>
