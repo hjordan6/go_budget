@@ -11,6 +11,7 @@ const buckets = ref([])
 const error = ref('')
 const loading = ref(true)
 const selectedId = ref(null)
+const reviewCount = ref(0)
 
 const money = new Intl.NumberFormat(undefined, {
   style: 'currency',
@@ -27,6 +28,16 @@ async function load() {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+// Best-effort pending count for the Review badge; never blocks the bucket list.
+async function loadReviewCount() {
+  try {
+    const pending = await api.get('/api/lunchmoney/transactions?status=pending')
+    reviewCount.value = pending.length
+  } catch {
+    reviewCount.value = 0
   }
 }
 
@@ -54,7 +65,10 @@ function onModalDeleted(id) {
   selectedId.value = null
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadReviewCount()
+})
 </script>
 
 <template>
@@ -65,7 +79,11 @@ onMounted(load)
         <div class="user" v-if="auth.user">{{ auth.user.name || auth.user.email }}</div>
       </div>
       <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px">
+        <RouterLink class="link review-link" style="color: #fff" to="/lunchmoney">
+          Review<span v-if="reviewCount > 0" class="badge">{{ reviewCount }}</span>
+        </RouterLink>
         <RouterLink class="link" style="color: #fff" to="/transactions">Transactions</RouterLink>
+        <RouterLink class="link" style="color: #fff" to="/settings">Settings</RouterLink>
         <button class="link" style="color: #fff" @click="doLogout">Log out</button>
       </div>
     </header>
@@ -118,3 +136,26 @@ onMounted(load)
     />
   </div>
 </template>
+
+<style scoped>
+.review-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+</style>

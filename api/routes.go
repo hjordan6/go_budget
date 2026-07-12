@@ -51,6 +51,18 @@ func Routes(db *gorm.DB, staticDir string) *http.ServeMux {
 	mux.HandleFunc("PUT /api/transactions/{id}", h.requireAuth(h.updateTransaction))
 	mux.HandleFunc("DELETE /api/transactions/{id}", h.requireAuth(h.deleteTransaction))
 
+	// Settings (auth required)
+	mux.HandleFunc("GET /api/settings", h.requireAuth(h.getSettings))
+	mux.HandleFunc("PUT /api/settings", h.requireAuth(h.updateSettings))
+
+	// Lunch Money import review (auth required)
+	mux.HandleFunc("GET /api/lunchmoney/transactions", h.requireAuth(h.listLunchMoneyTransactions))
+	mux.HandleFunc("PUT /api/lunchmoney/transactions/{id}", h.requireAuth(h.updateLunchMoneyTransaction))
+	mux.HandleFunc("POST /api/lunchmoney/transactions/{id}/import", h.requireAuth(h.importLunchMoneyTransaction))
+	mux.HandleFunc("POST /api/lunchmoney/transactions/{id}/ignore", h.requireAuth(h.ignoreLunchMoneyTransaction))
+	mux.HandleFunc("POST /api/lunchmoney/transactions/{id}/restore", h.requireAuth(h.restoreLunchMoneyTransaction))
+	mux.HandleFunc("POST /api/lunchmoney/sync", h.requireAuth(h.syncLunchMoney))
+
 	// SPA + static assets
 	mux.HandleFunc("/", spaHandler(staticDir))
 

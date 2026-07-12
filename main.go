@@ -9,6 +9,7 @@ import (
 
 	"github.com/hjordan6/go_budget/api"
 	"github.com/hjordan6/go_budget/models"
+	"github.com/hjordan6/go_budget/service"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -43,6 +44,7 @@ func main() {
 		&models.Income{},
 		&models.Session{},
 		&models.Transaction{},
+		&models.LunchMoneyTransaction{},
 	); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
@@ -50,6 +52,9 @@ func main() {
 	if err = seed(db); err != nil {
 		log.Fatalf("seed: %v", err)
 	}
+
+	// Pull new Lunch Money transactions into the review queue in the background.
+	service.StartLunchMoneySync(db)
 
 	staticDir := envOr("STATIC_DIR", "web/dist")
 
