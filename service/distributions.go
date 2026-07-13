@@ -107,12 +107,13 @@ func distributeJordan(income float64, buckets []models.Bucket) []Alloc {
 		amounts["Car"] = xr * 0.06
 		amounts["Clothes"] = xr * 0.045
 		amounts["Fun"] = xr * 0.0975
-		amounts["Other"] = xr * 0.25
-		xr -= (amounts["Other"] + amounts["Car"] + amounts["Clothes"] + amounts["Fun"])
+		amounts["Other"] = xr * 0.19
+		amounts["Savings - Short"] = xr * 0.13
+		xr -= (amounts["Other"] + amounts["Car"] + amounts["Clothes"] + amounts["Fun"] + amounts["Savings - Short"])
 	}
 
 	// Everything remaining goes to Savings.
-	amounts["Savings"] = xr
+	amounts["Savings - Long"] = xr
 
 	allocs := make([]Alloc, 0, len(buckets))
 	for _, b := range buckets {
